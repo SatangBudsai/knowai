@@ -55,45 +55,112 @@ class MemoryStore(ABC):
 
 
 class FileMemoryStore(MemoryStore):
-    """Stores memory as JSON. Works everywhere, no server needed."""
+    """
+    Stores memory as JSON. Concurrent-safe via file lock + atomic write.
+
+    Schema v2:
+        {
+          "version": 2,
+          "entries": {"<id>": {entry...}, ...},
+          "syntheses": {"<domain>": {summary, key_themes, ..., stale: bool}, ...}
+        }
+
+    Schema v1 (legacy, auto-migrated):
+        {"<id>": {entry...}, ...}
+    """
+
+    SCHEMA_VERSION = 2
 
     def __init__(self, store_path: str | Path = ".knowlyx/memory.json") -> None:
         self.path = Path(store_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._data: dict[str, dict] = {}
-        self._load()
+        self._cache: dict | None = None
+        self._migrate_if_needed()
 
-    def _load(self) -> None:
-        if self.path.exists():
-            try:
-                self._data = json.loads(self.path.read_text(encoding="utf-8"))
-            except Exception:
-                self._data = {}
+    # ------------------------------------------------------------------
+    # Internal — disk I/O
+    # ------------------------------------------------------------------
 
-    def _flush(self) -> None:
-        self.path.write_text(json.dumps(self._data, indent=2, default=str), encoding="utf-8")
+    def _read_disk(self) -> dict:
+        if not self.path.exists():
+            return self._empty()
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return self._empty()
+        return self._normalize(data)
+
+    @classmethod
+    def _empty(cls) -> dict:
+        return {"version": cls.SCHEMA_VERSION, "entries": {}, "syntheses": {}}
+
+    @classmethod
+    def _normalize(cls, data: dict) -> dict:
+        """Migrate v1 flat dict into v2 grouped structure on read."""
+        if data.get("version") == cls.SCHEMA_VERSION:
+            data.setdefault("entries", {})
+            data.setdefault("syntheses", {})
+            return data
+        # v1: bare {id: entry} dict — wrap
+        if all(isinstance(v, dict) and "kind" in v for v in data.values()):
+            return {"version": cls.SCHEMA_VERSION, "entries": data, "syntheses": {}}
+        return cls._empty()
+
+    def _migrate_if_needed(self) -> None:
+        if not self.path.exists():
+            return
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return
+        if raw.get("version") == self.SCHEMA_VERSION:
+            return
+        # rewrite in v2 shape (preserves v1 entries)
+        from knowlyx.storage import read_modify_write
+        def migrate(_current: dict) -> dict:
+            return self._normalize(raw)
+        read_modify_write(self.path, migrate, default=self._empty())
+
+    def _entries(self) -> dict:
+        return self._read_disk().get("entries", {})
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def save(self, entry: MemoryEntry) -> MemoryEntry:
         if not entry.id:
             entry.id = _entry_id(entry.kind.value, entry.domain, entry.title)
-        self._data[entry.id] = entry.model_dump(mode="json")
-        self._flush()
+        domain = entry.domain
+        payload = entry.model_dump(mode="json")
+
+        from knowlyx.storage import read_modify_write
+
+        def mutate(current: dict) -> dict:
+            current = self._normalize(current)
+            current["entries"][entry.id] = payload
+            # mark this domain's synthesis stale (new evidence arrived)
+            syn = current["syntheses"].get(domain)
+            if syn:
+                syn["stale"] = True
+            return current
+
+        read_modify_write(self.path, mutate, default=self._empty())
         return entry
 
     def get(self, entry_id: str) -> MemoryEntry | None:
-        raw = self._data.get(entry_id)
+        raw = self._entries().get(entry_id)
         return MemoryEntry(**raw) if raw else None
 
     def search(self, query: str, kind: MemoryKind | None = None, domain: str = "", limit: int = 10) -> list[MemoryEntry]:
         q = query.lower()
         results: list[tuple[int, MemoryEntry]] = []
-        for raw in self._data.values():
+        for raw in self._entries().values():
             e = MemoryEntry(**raw)
             if kind and e.kind != kind:
                 continue
             if domain and e.domain != domain:
                 continue
-            # simple keyword relevance score
             text = f"{e.title} {e.body} {' '.join(e.tags)}".lower()
             score = sum(1 for word in q.split() if word in text)
             if score:
@@ -102,17 +169,70 @@ class FileMemoryStore(MemoryStore):
         return [e for _, e in results[:limit]]
 
     def list_by_domain(self, domain: str) -> list[MemoryEntry]:
-        return [MemoryEntry(**r) for r in self._data.values() if r.get("domain") == domain]
+        return [MemoryEntry(**r) for r in self._entries().values() if r.get("domain") == domain]
 
     def delete(self, entry_id: str) -> bool:
-        if entry_id in self._data:
-            del self._data[entry_id]
-            self._flush()
-            return True
-        return False
+        from knowlyx.storage import read_modify_write
+        removed = {"ok": False}
+        def mutate(current: dict) -> dict:
+            current = self._normalize(current)
+            if entry_id in current["entries"]:
+                del current["entries"][entry_id]
+                removed["ok"] = True
+            return current
+        read_modify_write(self.path, mutate, default=self._empty())
+        return removed["ok"]
 
     def all(self) -> list[MemoryEntry]:
-        return [MemoryEntry(**r) for r in self._data.values()]
+        return [MemoryEntry(**r) for r in self._entries().values()]
+
+    # ------------------------------------------------------------------
+    # Synthesis API (v2) — Claude-delegated summaries cached per-domain
+    # ------------------------------------------------------------------
+
+    def get_synthesis(self, domain: str) -> dict | None:
+        return self._read_disk().get("syntheses", {}).get(domain)
+
+    def save_synthesis(self, domain: str, summary: str, key_themes: list[str],
+                       open_questions: list[str], synthesized_by: str = "ai") -> dict:
+        """Cache an AI-synthesized summary for a domain. Marks not-stale."""
+        from datetime import datetime, timezone
+        from knowlyx.storage import read_modify_write
+
+        entry_ids: list[str] = []
+        for eid, raw in self._entries().items():
+            if raw.get("domain") == domain:
+                entry_ids.append(eid)
+
+        synthesis = {
+            "summary": summary,
+            "key_themes": key_themes,
+            "open_questions": open_questions,
+            "synthesized_at": datetime.now(timezone.utc).isoformat(),
+            "synthesized_by": synthesized_by,
+            "entry_count_at_synthesis": len(entry_ids),
+            "entry_ids": entry_ids,
+            "stale": False,
+        }
+
+        def mutate(current: dict) -> dict:
+            current = self._normalize(current)
+            current["syntheses"][domain] = synthesis
+            return current
+
+        read_modify_write(self.path, mutate, default=self._empty())
+        return synthesis
+
+    def synthesis_stale(self, domain: str) -> bool:
+        syn = self.get_synthesis(domain)
+        if not syn:
+            return True
+        if syn.get("stale"):
+            return True
+        current_count = sum(
+            1 for r in self._entries().values() if r.get("domain") == domain
+        )
+        return current_count != syn.get("entry_count_at_synthesis", 0)
 
 
 # ------------------------------------------------------------------
@@ -218,6 +338,17 @@ class QdrantMemoryStore(MemoryStore):
 
     def all(self) -> list[MemoryEntry]:
         return self._fallback.all()
+
+    # synthesis API — always served from file fallback (Qdrant is for vectors only)
+    def get_synthesis(self, domain: str) -> dict | None:
+        return self._fallback.get_synthesis(domain)
+
+    def save_synthesis(self, domain: str, summary: str, key_themes: list[str],
+                       open_questions: list[str], synthesized_by: str = "ai") -> dict:
+        return self._fallback.save_synthesis(domain, summary, key_themes, open_questions, synthesized_by)
+
+    def synthesis_stale(self, domain: str) -> bool:
+        return self._fallback.synthesis_stale(domain)
 
 
 # ------------------------------------------------------------------

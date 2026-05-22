@@ -135,7 +135,21 @@ def _try_load_dict(text: str) -> dict:
 
 
 def _newer(a: dict | None, b: dict) -> dict:
+    """
+    Merge two versions of the same logical entry.
+
+    Security fail-safe: if either side is a REJECTED approval, the rejected
+    version wins regardless of timestamp. Approve must never silently
+    overwrite a reject during sync.
+
+    Otherwise: newer created_at / cached_at wins.
+    """
     if a is None:
+        return b
+    # approval fail-safe — rejected always sticks
+    if a.get("status") == "rejected":
+        return a
+    if b.get("status") == "rejected":
         return b
     a_t = a.get("created_at") or a.get("cached_at") or ""
     b_t = b.get("created_at") or b.get("cached_at") or ""

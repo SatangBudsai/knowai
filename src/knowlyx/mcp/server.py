@@ -27,11 +27,19 @@ from knowlyx.scanner.repo_scanner import RepoScanner
 mcp = FastMCP(
     name="knowlyx",
     instructions=(
-        "Knowlyx is a cognitive enforcement layer. "
-        "ALWAYS call analyze_intent FIRST before writing any code. "
-        "Then call get_conventions and get_reusable_assets to avoid duplicating existing work. "
-        "Use recall_context to check for human-approved business knowledge before making assumptions. "
-        "Never skip these tools — they exist to enforce architectural integrity."
+        "Knowlyx is a cognitive enforcement layer. Mandatory workflow for ANY code change:\n"
+        "\n"
+        "1. analyze_intent(request) — FIRST. Returns rule-based decision + impact + risk.\n"
+        "2. If decision is 'ask' or 'reject' → call request_approval() and wait.\n"
+        "3. get_domain_knowledge(domain) — read related memory. If synthesis is stale,\n"
+        "   YOU must distill themes/conflicts/open-questions and call save_synthesis().\n"
+        "4. get_reusable_assets(domain) — reuse before creating.\n"
+        "5. assess_risk_in_context(request) — you may UPGRADE the rule-based decision\n"
+        "   if historical context (memory) warrants it. You may NEVER downgrade it.\n"
+        "6. validate_generated_code(code) — BEFORE writing. Fix all blockers, re-validate.\n"
+        "\n"
+        "Rule: Knowlyx decisions are AUTHORITATIVE. You may only make them stricter, never looser.\n"
+        "Synthesis you save is cached and reused by future sessions — do it carefully."
     ),
 )
 
@@ -157,6 +165,15 @@ def analyze_intent(request: str, repo_path: str = ".") -> str:
         output["PAUSE"] = "Risk level is HIGH. Ask the user to confirm before proceeding."
     elif decision == "warn":
         output["NOTICE"] = "Risk level is MEDIUM. Proceed with caution and follow the required workflow."
+
+    # Binding rule for AI agents
+    output["risk_policy"] = {
+        "rule": "Knowlyx decision is authoritative. You may UPGRADE risk based on context "
+                "(proceed → warn → ask → reject). You may NEVER downgrade. "
+                "If you upgrade to 'ask' or 'reject', call request_approval() before coding.",
+        "order": ["proceed", "warn", "ask", "reject"],
+        "current": decision,
+    }
 
     return json.dumps(output, indent=2, ensure_ascii=False)
 
@@ -691,6 +708,193 @@ def reject_request(request_id: str, reason: str = "", reviewed_by: str = "human"
     if not req:
         return json.dumps({"error": f"Request '{request_id}' not found."})
     return json.dumps({"status": "rejected", "id": req.id, "reason": reason}, indent=2)
+
+
+@mcp.tool()
+def get_domain_knowledge(domain: str, repo_path: str = ".") -> str:
+    """
+    Return ALL approved memory entries for a domain as raw structured data,
+    PLUS a cached synthesis if available and still fresh.
+
+    YOU (the AI agent) MUST do the following BEFORE coding in this domain:
+    1. If `synthesis.stale` is true OR `synthesis` is null:
+       - Read all entries
+       - Identify: (a) common themes, (b) conflicting decisions, (c) open questions
+       - Call `save_synthesis(domain, summary, key_themes, open_questions)` to cache
+    2. Use the synthesis (yours or cached) to guide the implementation.
+
+    The cached synthesis is reused by all future calls until new entries arrive
+    (the system marks it stale automatically).
+    """
+    _, _, _, store = _get_engine(repo_path)
+    entries = [e for e in store.all() if e.domain == domain and e.approved]
+    synthesis = store.get_synthesis(domain) if hasattr(store, "get_synthesis") else None
+    stale = store.synthesis_stale(domain) if hasattr(store, "synthesis_stale") else True
+
+    return json.dumps({
+        "domain": domain,
+        "entry_count": len(entries),
+        "entries": [
+            {
+                "id": e.id,
+                "kind": e.kind.value,
+                "title": e.title,
+                "body": e.body,
+                "tags": e.tags,
+                "approved_by": e.approved_by,
+            }
+            for e in entries
+        ],
+        "synthesis": synthesis,
+        "synthesis_stale": stale,
+        "instruction_for_ai": (
+            "Synthesis is stale or missing. Read entries, then call "
+            "save_synthesis() with: a 3-5 sentence summary tying related "
+            "decisions together, a list of key themes, and open questions."
+            if stale else
+            "Cached synthesis is fresh. Use it directly."
+        ),
+    }, indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def save_synthesis(
+    domain: str,
+    summary: str,
+    key_themes: list[str],
+    open_questions: list[str] = None,
+    repo_path: str = ".",
+) -> str:
+    """
+    Cache YOUR synthesis of related memory entries for a domain.
+
+    Call this AFTER reading raw entries from get_domain_knowledge() and
+    distilling them into a coherent summary that groups RELATED CONTENT.
+
+    The cached synthesis is reused by all future calls until new memory
+    entries arrive in this domain (then it's marked stale automatically).
+
+    Args:
+      summary: 3-5 sentence narrative tying related decisions together
+      key_themes: ["idempotency", "stripe", "refund-policy"] etc.
+      open_questions: things the memory hasn't decided yet
+    """
+    _, _, _, store = _get_engine(repo_path)
+    if not hasattr(store, "save_synthesis"):
+        return json.dumps({"error": "store does not support synthesis caching"})
+    saved = store.save_synthesis(
+        domain=domain,
+        summary=summary,
+        key_themes=key_themes,
+        open_questions=open_questions or [],
+        synthesized_by="ai",
+    )
+    return json.dumps({"status": "cached", "domain": domain, "synthesis": saved}, indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def assess_risk_in_context(request: str, repo_path: str = ".") -> str:
+    """
+    Return rule-based risk (AUTHORITATIVE) + historical context for YOUR judgment.
+
+    YOU may UPGRADE the risk (proceed → warn → ask → reject) if the historical
+    context shows past incidents related to the request. You may NOT downgrade.
+
+    If you upgrade to "ask" or "reject", call request_approval() before coding.
+    """
+    from knowlyx.reasoning.impact_analyzer import ImpactAnalyzer
+    from knowlyx.reasoning.intent_analyzer import IntentAnalyzer
+    from knowlyx.reasoning.risk_scorer import RiskScorer
+
+    _, scan, graph, store = _get_engine(repo_path)
+    intent = IntentAnalyzer(scan).analyze(request)
+    impact = ImpactAnalyzer(scan, graph).analyze(intent)
+    risk = RiskScorer(scan).score(intent, impact)
+
+    # gather historical context: memory entries that mention risk_pattern in same domain
+    related = []
+    for m in store.all():
+        if not m.approved:
+            continue
+        if m.domain != intent.detected_domain and m.kind.value != "risk_pattern":
+            continue
+        text = (m.title + " " + m.body).lower()
+        if any(kw in text for kw in (intent.detected_action, *intent.affected_areas)):
+            related.append({
+                "kind": m.kind.value,
+                "title": m.title,
+                "body": m.body[:200],
+            })
+
+    return json.dumps({
+        "rule_based_decision": risk.decision.value,
+        "rule_based_level": risk.level.value,
+        "reasons": risk.reasons,
+        "warnings": risk.warnings,
+        "domain": intent.detected_domain,
+        "historical_context": related,
+        "rule": "AI may UPGRADE decision (proceed→warn→ask→reject) based on context. Never downgrade.",
+        "instruction": (
+            "Review historical_context. If past incidents touch this code path or domain, "
+            "upgrade the decision and call request_approval() before coding."
+        ),
+    }, indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def get_module_context(module_path: str, repo_path: str = ".") -> str:
+    """
+    Return all known signals about a module so YOU can judge how risky it is to change.
+
+    Signals (deterministic):
+    - imported_by_count: how many files import this module
+    - domains: which business domains this module belongs to
+    - mentioned_in_memory: memory entries that reference this path
+    - declared_critical: marked critical in workspace/link config
+    - is_reusable_asset: appears in the reusable asset registry
+
+    YOU should weigh these signals to decide if a change here needs extra scrutiny.
+    """
+    from knowlyx.link.resolver import resolve_workspace
+
+    _, scan, graph, store = _get_engine(repo_path)
+    target = module_path.replace("\\", "/").lower()
+
+    # find as reusable asset
+    asset_match = None
+    for a in scan.reusable_assets:
+        if target in a.path.lower() or target == a.name.lower():
+            asset_match = {"name": a.name, "type": a.asset_type, "path": a.path, "tags": a.tags}
+            break
+
+    # memory mentions
+    memory_mentions = []
+    for m in store.all():
+        if not m.approved:
+            continue
+        if target in (m.body + m.title).lower():
+            memory_mentions.append({"id": m.id, "title": m.title, "kind": m.kind.value})
+
+    # workspace criticality
+    res = resolve_workspace(repo_path)
+    declared_critical = bool(res and res.link.critical)
+    declared_domains = list(res.link.domains) if res else []
+
+    # domain inference
+    inferred_domains = [d for d in scan.domains if d in target]
+
+    return json.dumps({
+        "module_path": module_path,
+        "is_reusable_asset": asset_match,
+        "mentioned_in_memory": memory_mentions,
+        "declared_critical": declared_critical,
+        "declared_domains": declared_domains,
+        "inferred_domains": inferred_domains,
+        "instruction": (
+            "Higher scrutiny if: declared_critical=true, OR mentioned in memory, OR "
+            "spans multiple domains. Combine with assess_risk_in_context() if uncertain."
+        ),
+    }, indent=2, ensure_ascii=False)
 
 
 @mcp.tool()

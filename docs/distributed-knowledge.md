@@ -44,6 +44,65 @@ knowlyx analyze "rename users.email"
 # → รู้ topology ของ web/mobile/worker แม้ไม่ได้ clone
 ```
 
+## Concurrency safety (v0.5+)
+
+All writes ไปยัง `memory.json` / `approvals.json` ป้องกันด้วย:
+
+1. **File lock** cross-platform — `fcntl` POSIX / `msvcrt` Windows
+2. **Atomic write** — write temp ก่อน `os.replace()` → readers เห็น old หรือ new เท่านั้น, ไม่มี half-written
+3. **Read-modify-write under lock** — ทุก save re-read disk → mutate → atomic write → **ไม่มี lost update** แม้ 2 sessions save พร้อมกัน
+
+**Approve/reject fail-safe:** once REJECTED → stays rejected
+
+- `approve(id)` หลัง reject เป็น no-op (return entry เดิมที่ rejected)
+- `auto_merge_json` ใน git sync ก็เคารพกฎเดียวกัน (reject ชนะเสมอ, ไม่สน timestamp)
+
+→ กันเคส: Dev A approve → Dev B reject เพราะเหตุผลที่ถูกต้อง → คนอื่น re-approve โดยไม่ตั้งใจ → bad change ออก production
+
+## Memory schema v2 (auto-migrated จาก v1)
+
+```json
+{
+  "version": 2,
+  "entries": {
+    "abc123": { "kind": "team_decision", "domain": "billing", "title": "...", ... }
+  },
+  "syntheses": {
+    "billing": {
+      "summary": "Team uses Stripe Billing for B2C, Stripe Connect for marketplaces. Refunds over $1000 need finance approval. All payment calls require idempotency keys.",
+      "key_themes": ["stripe", "idempotency", "finance-approval"],
+      "open_questions": ["Subscription proration policy?"],
+      "synthesized_at": "2026-05-22T...",
+      "synthesized_by": "ai",
+      "entry_count_at_synthesis": 12,
+      "stale": false
+    }
+  }
+}
+```
+
+### Synthesis populate ยังไง? — Delegate-to-Claude pattern
+
+**Knowlyx ไม่มี LLM ใน core** — AI agent ของคุณ (Claude/Cursor/etc.) เป็นคน synthesize:
+
+1. AI call `get_domain_knowledge("billing")`
+2. Knowlyx ส่ง raw entries + synthesis status (stale หรือ fresh)
+3. ถ้า stale หรือไม่มี → tool result บอก AI ให้ distill themes/conflicts/open-questions
+4. AI call `save_synthesis(domain, summary, themes, questions)` → cache
+5. ทุก session ถัดไปได้ cached synthesis (จน entry ใหม่มาถึง → mark stale → re-synthesize)
+
+→ ได้คุณภาพ LLM โดยที่ Knowlyx ไม่มี dependency LLM (ไม่ต้อง API key, ไม่มีค่าใช้จ่าย, ไม่ vendor lock-in)
+
+### Risk upgrade-only rule
+
+`analyze_intent` return `risk_policy` field — AI ต้องเคารพ:
+
+```text
+proceed → warn → ask → reject  (severity order)
+```
+
+AI ทำให้ strict ขึ้นได้ (เลื่อนขวา) ตาม historical context AI **ห้าม** ทำให้หลวมลง (เลื่อนซ้าย) Knowlyx decision คือ floor
+
 ## Backward compatibility
 
 ของเดิมยังใช้ได้หมด:

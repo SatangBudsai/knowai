@@ -4,20 +4,59 @@ All notable changes to Knowlyx. Format: [Keep a Changelog](https://keepachangelo
 
 ## [Unreleased]
 
-### Added
+### Added — concurrency & safety
 
-- `paths` module — cross-platform central path resolver (`~/.knowlyx/`, honors `KNOWLYX_HOME` env)
+- `storage` package — cross-platform file lock (`fcntl` POSIX / `msvcrt` Windows), atomic write (write-temp-then-rename), and `read_modify_write()` helper
+- `FileMemoryStore` uses atomic R-M-W on every save — no lost updates when multiple Claude/CLI sessions write simultaneously
+- `ApprovalQueue` same treatment — concurrent submits/approves/rejects are serialized
+- **Approve/reject fail-safe**: once REJECTED, an approval stays rejected. Subsequent `approve()` is a no-op. `auto_merge_json` enforces the same rule in git sync conflicts.
+
+### Added — memory schema v2 (auto-migrated from v1)
+
+New shape:
+
+```json
+{
+  "version": 2,
+  "entries": {"<id>": {...}},
+  "syntheses": {"<domain>": {summary, key_themes, open_questions, stale, ...}}
+}
+```
+
+- Per-domain synthesis cache — AI reads raw entries, distills themes, calls `save_synthesis()` once; future sessions reuse cached synthesis
+- Synthesis auto-marked `stale: true` when a new entry arrives → triggers re-synthesis
+- v1 flat-dict files auto-migrate on first read
+
+### Added — delegate-to-Claude MCP tools (no LLM inside Knowlyx)
+
+- `get_domain_knowledge(domain)` — raw entries + cached synthesis + instruction to AI
+- `save_synthesis(domain, summary, themes, questions)` — AI caches its own synthesis
+- `assess_risk_in_context(request)` — rule-based risk + historical incidents; AI may UPGRADE only
+- `get_module_context(module_path)` — signals for AI judgment about module criticality
+
+### Added — risk upgrade-only enforcement
+
+- `analyze_intent` returns a `risk_policy` field: Knowlyx's decision is authoritative; AI may stricten (`proceed → warn → ask → reject`) but never loosen
+
+### Added — distributed knowledge (Phase 4.A)
+
+- `paths` module — cross-platform central path resolver (`~/.knowlyx/`, honors `KNOWLYX_HOME`)
 - `link` module — per-repo `.knowlyx/config.toml` + walk-up workspace resolver
 - CLI: `workspace create`, `workspace list`, `link`, `unlink`, `migrate`
 - `load_central(workspace_name)` for loading workspace config from central store
-- Tests: `test_paths.py`, `test_link.py`
-- Documentation restructured for OSS audience (`docs/` user-facing, `internal/` design specs)
-- `CONTRIBUTING.md`, `ROADMAP.md`, `CHANGELOG.md` at repo root
+
+### Added — install & onboarding
+
+- `install.sh` / `install.ps1` — one-line bootstrap (installs uv if missing, installs knowlyx, optional workspace + Claude registration)
+- `knowlyx init --link <workspace>` — auto-detect role + domains + create link config
+- README rewritten with copy-paste examples for Claude Code / Cursor / Cline / Continue / Windsurf / no-AI usage
 
 ### Changed
 
-- `create_store()` and `get_queue()` now auto-resolve central workspace when a link config is present (fully backward compatible)
-- `workspace.config_loader.load()` falls back to central path when no local `knowlyx.toml` found
+- `create_store()` and `get_queue()` auto-resolve central workspace when a link config is present (fully backward compatible)
+- `workspace.config_loader.load()` falls back to central path when no local `knowlyx.toml`
+- Documentation restructured for OSS audience (`docs/` user-facing, `internal/` design specs)
+- `CONTRIBUTING.md`, `ROADMAP.md`, `CHANGELOG.md` at repo root
 
 ## [0.3.0] — 2026-Q1
 
