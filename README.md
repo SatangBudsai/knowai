@@ -187,45 +187,50 @@ If `command not found`, open a new terminal (uv/pipx adds to your PATH on first 
 
 ### Step 6 — Point the CLI at the same database
 
-Drop a `knowai.toml` file at the root of any repo you'll run the CLI in. The CLI walks up from your current directory looking for it — no shell exports, no copying `.env` around.
+knowai needs your Postgres credentials. The fastest setup is one file in your home directory — works in every repo, no per-project setup:
 
-Create **`knowai.toml`** alongside your code:
-
-```toml
+```bash
+mkdir -p ~/.config/knowai
+cat > ~/.config/knowai/config.toml <<'EOF'
 [database]
 host     = "localhost"
 port     = 5432
 user     = "knowai"
-password = "knowai"      # local dev only — see note below
+password = "knowai"
 db       = "knowai"
 schema   = "public"
+EOF
 ```
 
-A ready-to-copy version lives at [`knowai.toml.example`](knowai.toml.example) in this repo.
-
-Verify it works:
+Verify:
 
 ```bash
-cd /path/to/your/repo   # any folder under one with knowai.toml works too
-knowai memory list      # should print [] or your existing entries, no error
+knowai memory list   # should print [] or your existing entries — no error
 ```
+
+**Per-project override:** drop a `knowai.toml` at any repo root and it wins over the global one. Useful if a repo points at a different database. See [`knowai.toml.example`](knowai.toml.example) for the format.
 
 **Precedence** (highest first):
 
 1. Process env vars already set (CI / Docker / shell exports win)
-2. `knowai.toml`
-3. `.env` (the same file `docker compose` uses — kept as a fallback)
+2. `knowai.toml` in cwd or any parent dir (project-specific)
+3. `~/.config/knowai/config.toml` (user-global)
+4. `.env` (the same file `docker compose` uses — kept as a fallback)
 
-> **Note on the password.** For local dev `localhost`, the value in `knowai.toml` is fine. For shared dev / prod, commit `knowai.toml` without the password and set `POSTGRES_PASSWORD` via your shell or your team's secrets manager — process env vars override the file.
+> **Note on the password.** For local dev `localhost`, the value in the file is fine. For shared dev / prod, omit the password and set `POSTGRES_PASSWORD` via your shell or your team's secrets manager — process env vars override the file.
 
 ### Step 7 — Connect to Claude Code
 
+Register knowai **once at user scope** so it works in every project — no need to re-register per repo:
+
 ```bash
-claude mcp add knowai -- knowai mcp --repo .
+claude mcp add --scope user knowai -- knowai mcp
 claude mcp list      # should show: knowai ✓
 ```
 
-After this, **every chat with Claude in this folder** automatically queries knowai before generating code — no extra action needed daily.
+After this, **every chat with Claude in any folder** automatically queries knowai before generating code.
+
+> Drop the `--scope user` if you want knowai available in **this project only** (the default `local` scope).
 
 #### Or Cursor
 
@@ -236,7 +241,7 @@ Edit `~/.cursor/mcp.json`:
   "mcpServers": {
     "knowai": {
       "command": "knowai",
-      "args": ["mcp", "--repo", "."]
+      "args": ["mcp"]
     }
   }
 }
@@ -256,7 +261,10 @@ In your AI chat, type:
 - **Cursor**: hover the assistant message — MCP tool calls appear inline.
 - The reply mentions your Step 4 entry about idempotency keys.
 
-If you see no MCP call: env vars from Step 6 aren't loaded in the shell that started Claude/Cursor — restart that app after exporting them.
+If you see no MCP call:
+
+- Confirm registration: `claude mcp list` should show `knowai ✓`. If it shows `✗`, run `knowai mcp` manually in a terminal — the error tells you what's missing (usually credentials).
+- Make sure `~/.config/knowai/config.toml` exists (Step 6), or that the repo you ran Claude in has its own `knowai.toml`.
 
 ---
 
