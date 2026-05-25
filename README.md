@@ -185,12 +185,15 @@ knowai --version
 
 If `command not found`, open a new terminal (uv/pipx adds to your PATH on first install).
 
-### Step 6 — Give the CLI your Postgres credentials
+### Step 6 — Give the CLI your credentials
 
 Drop one file in your home directory. Works in every repo:
 
 ```bash
 cat > ~/.knowai.config <<'EOF'
+workspace = "my-product"     # every repo on this machine joins this workspace
+                             # repo_name = folder name (auto)
+
 [database]
 host     = "localhost"
 port     = 5432
@@ -207,27 +210,9 @@ Verify:
 knowai memory list   # prints [] or your entries — no error
 ```
 
-That's it for single-database setups.
+That's it. If you `cd` into `~/code/aaa-website` and `~/code/aaa-service`, knowai treats them as two repos in the **same workspace**, named after their folders. No per-repo command needed.
 
-### Step 6½ — (optional) Identify each repo to a workspace
-
-If you have **multiple repos sharing one knowledge base** (e.g. `api`, `web`, `worker`), generate a project file inside each:
-
-```bash
-cd ~/code/api
-knowai link my-product --role backend --domains payment,auth
-```
-
-This writes `./knowai.config` at the repo root with:
-
-```toml
-workspace = "my-product"
-repo_name = "api"
-role      = "backend"
-domains   = ["payment", "auth"]
-```
-
-Commit it — every dev who clones the repo is auto-connected to the same workspace. The same file can also carry a `[database]` section that overrides `~/.knowai.config` for that repo. See [`knowai.config.example`](knowai.config.example).
+> **Need a different workspace for some repo?** Drop a `./knowai.config` at its root with `workspace = "other-product"` (override). Or run `knowai link <workspace> --role ... --domains ...` to generate it. See [`knowai.config.example`](knowai.config.example) for the full format.
 
 **Config precedence** (highest first): process env → `./knowai.config` (cwd or any parent) → `~/.knowai.config` → `.env`.
 

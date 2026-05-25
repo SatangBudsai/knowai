@@ -42,6 +42,32 @@ class LinkConfig(BaseModel):
         return self.repo_name or Path(repo_path).resolve().name
 
 
+def load_global_link() -> dict | None:
+    """Read top-level workspace identity from ~/.knowai.config.
+
+    Returns a dict with workspace/role/domains/tags if the file declares a
+    `workspace` key at the top level. Used by the resolver as a fallback so
+    every repo auto-joins the user's default workspace without needing its
+    own knowai.config.
+    """
+    path = Path.home() / ".knowai.config"
+    if not path.exists():
+        return None
+    try:
+        import tomllib
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if "workspace" not in data:
+        return None
+    return {
+        "workspace": str(data["workspace"]),
+        "role":      str(data.get("role", "unknown")),
+        "domains":   list(data.get("domains", [])),
+        "tags":      list(data.get("tags", [])),
+    }
+
+
 def load_link(repo_path: str | Path = ".") -> LinkConfig | None:
     """Return LinkConfig if knowai.config exists and declares workspace, else None."""
     path = repo_link_config_path(repo_path)
