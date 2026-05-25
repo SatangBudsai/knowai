@@ -58,10 +58,19 @@ def _read_toml(toml_file: Path, root: Path) -> WorkspaceConfig:
 
 
 def save(config: WorkspaceConfig, workspace_path: str | Path = ".") -> Path:
-    """Serialize config to knowlyx.toml."""
+    """Serialize config to knowlyx.toml + write any embedded repos as per-file
+    entries under <workspace>/repos/. This keeps the round-trip stable:
+    `load(save(cfg)).repos == cfg.repos`."""
     root = Path(workspace_path).resolve()
     toml_file = root / _DEFAULT_FILENAME
     toml_file.write_text(_serialize(config), encoding="utf-8")
+    if config.repos:
+        repos_dir = root / "repos"
+        repos_dir.mkdir(parents=True, exist_ok=True)
+        for repo in config.repos:
+            (repos_dir / f"{_safe_repo_filename(repo.name)}.toml").write_text(
+                _serialize_repo(repo), encoding="utf-8"
+            )
     return toml_file
 
 
@@ -85,7 +94,7 @@ def register_repo_in_workspace(
     `written_path` is None if the workspace folder doesn't exist locally
     (caller should print the clone hint).
     """
-    from knowlyx.paths import workspace_dir, workspace_toml_path
+    from knowlyx.paths import workspace_toml_path
 
     toml_path = workspace_toml_path(workspace_name)
     if not toml_path.exists():
@@ -124,22 +133,24 @@ def _safe_repo_filename(name: str) -> str:
 
 
 def _serialize_repo(repo: RepoConfig) -> str:
-    """Serialize a single repo as a flat TOML file (no `[[repos]]` header)."""
-    lines = [f'name = "{repo.name}"']
+    """Serialize a single repo as a flat TOML file (no `[[repos]]` header).
+    Uses TOML literal strings (single-quoted) so Windows paths with backslashes
+    don't get interpreted as escape sequences."""
+    lines = [f"name = '{repo.name}'"]
     if repo.git_url:
-        lines.append(f'git_url = "{repo.git_url}"')
+        lines.append(f"git_url = '{repo.git_url}'")
     if repo.path:
-        lines.append(f'path = "{repo.path}"')
+        lines.append(f"path = '{repo.path}'")
     if repo.role != RepoRole.UNKNOWN:
-        lines.append(f'role = "{repo.role.value}"')
+        lines.append(f"role = '{repo.role.value}'")
     if repo.domains:
-        lines.append(f"domains = {repo.domains!r}")
+        lines.append("domains = [" + ", ".join(f"'{d}'" for d in repo.domains) + "]")
     if repo.tags:
-        lines.append(f"tags = {repo.tags!r}")
+        lines.append("tags = [" + ", ".join(f"'{t}'" for t in repo.tags) + "]")
     if repo.critical:
         lines.append("critical = true")
     if repo.description:
-        lines.append(f'description = "{repo.description}"')
+        lines.append(f"description = '{repo.description}'")
     lines.append("")
     return "\n".join(lines)
 

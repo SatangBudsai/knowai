@@ -114,4 +114,6 @@ def test_init_without_link_prints_suggestions(isolated_home, tmp_path):
     (repo / "package.json").write_text('{"dependencies": {}}', encoding="utf-8")
     r = runner.invoke(app, ["init", "--repo", str(repo)])
     assert r.exit_code == 0
-    assert "workspace create" in r.output
+    # init now suggests either --knowledge (be the workspace) or --link (join one)
+    assert "--knowledge" in r.output
+    assert "--link" in r.output

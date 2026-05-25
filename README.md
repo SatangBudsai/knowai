@@ -1,18 +1,43 @@
 # knowai
 
 **Cognitive enforcement layer for AI software development.**
-**ชั้นบังคับให้ AI เข้าใจระบบก่อนเขียนโค้ด**
 
 > Knowledge is passive. Cognition must be enforced.
-> ความรู้เป็นแค่ข้อมูล — ต้องบังคับให้ AI เข้าใจก่อน
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
 ---
 
-## English
+## What is knowai
 
-### Step 1 — Install Docker
+AI coding tools generate code fast — but they don't understand your system. They duplicate utilities, ignore conventions, miss cross-service impact, and re-invent decisions your team already made.
 
-You need Docker + Docker Compose. That's it. No Python, no database setup.
+knowai sits between your AI assistant and your codebase. When you ask Claude *"add a refund endpoint"*, knowai intercepts and returns:
+
+```text
+Domain:    payment (HIGH)
+Decision:  WARN — follow team conventions
+
+Reuse:     PaymentClient, IdempotencyMiddleware
+Memory:    "Use idempotency keys for all payment calls" (alice, approved)
+
+Risk:      Touches 3 services. Cascade: refund → webhook → ledger
+```
+
+Claude reads this through MCP — it can't skip it. Result: code that follows team rules on the first try.
+
+Knowledge is stored in **Postgres** with semantic auto-merge (similar entries merge into one). A web dashboard lets the team add/approve/audit knowledge without touching the DB.
+
+---
+
+## Prerequisites
+
+| Need | Why |
+|---|---|
+| **Docker + Docker Compose v2** | run Postgres + dashboard |
+| **Python 3.11+** with `uv` or `pipx` | *only* if you want AI/MCP integration (Part 2) |
+| **~2GB RAM free** | embedding model loads in the web container |
 
 Verify:
 
@@ -21,72 +46,151 @@ docker --version
 docker compose version
 ```
 
-### Step 2 — Clone and configure
+---
+
+## Part 1 — Dashboard (no clone, no Python)
+
+### Step 1 — Make a folder and two files
 
 ```bash
-git clone https://github.com/SatangBudsai/knowlyx.git knowai
-cd knowai
-cp .env.example .env
+mkdir knowai && cd knowai
 ```
 
-Default `.env` works for local use. For a team, edit `POSTGRES_PASSWORD` and `POSTGRES_HOST`.
+Create **`.env`** with this content (defaults work for local use; for a team change `POSTGRES_PASSWORD`):
 
-### Step 3 — Start everything
+```env
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_USER=knowai
+POSTGRES_PASSWORD=knowai
+POSTGRES_DB=knowai
+POSTGRES_SCHEMA=public
+
+WEB_PORT=8080
+```
+
+Create **`docker-compose.yml`** with this content:
+
+```yaml
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: knowai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-knowai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-knowai}
+      POSTGRES_DB: ${POSTGRES_DB:-knowai}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - knowai_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-knowai} -d ${POSTGRES_DB:-knowai}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  web:
+    image: ghcr.io/satangbudsai/knowai:latest
+    container_name: knowai-web
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-knowai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-knowai}
+      POSTGRES_DB: ${POSTGRES_DB:-knowai}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_SCHEMA: ${POSTGRES_SCHEMA:-public}
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+
+volumes:
+  knowai_pgdata:
+```
+
+### Step 2 — Start the stack
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
 
-This starts two services:
-- **Postgres** on port `5432` — stores knowledge
-- **Web dashboard** on port `8080` — team UI
+First run pulls the images (~30s). Then both services come up:
 
-Wait for both to be healthy:
+- **`knowai-postgres`** on port `5432` — stores knowledge (schema auto-bootstraps)
+- **`knowai-web`** on port `8080` — team dashboard
+
+Wait until both are healthy:
 
 ```bash
 docker compose ps
 ```
 
-### Step 4 — Open the dashboard
+Both rows should show `Up X seconds (healthy)`.
 
-Open in browser:
+### Step 3 — Open the dashboard
 
-```
-http://localhost:8080
-```
+Open <http://localhost:8080> in your browser.
 
 You'll see the **Overview** page with all counts at 0.
 
-### Step 5 — Add your first knowledge entry
+### Step 4 — Add your first knowledge entry
 
-Click **Knowledge** in the top nav, then:
-
-1. Sign in with your name (sticky cookie, used for audit log)
-2. Fill the form:
-   - **Kind**: pick `team_decision`
-   - **Domain**: e.g. `payment`
-   - **Title**: e.g. `Use idempotency keys`
-   - **Body**: e.g. `All POST /payments require an Idempotency-Key header.`
+1. Click **Knowledge** in the top nav.
+2. *(Optional)* Sign in with your name — sets a sticky cookie used as the audit-log author. Skip and the actor will be `web`.
+3. Fill the form:
+   - **Kind**: `team_decision`
+   - **Domain**: `payment`
+   - **Title**: `Use idempotency keys`
+   - **Body**: `All POST /payments require an Idempotency-Key header.`
    - **Tags**: `payment, api`
    - Tick ☑ Auto-approve
-3. Click **Save knowledge**
+4. Click **Save knowledge** → you land on the entry detail page.
 
-You'll land on the entry detail page. Go back to Overview — count is now 1.
+Go back to **Overview** — `Active = 1`, `Approved = 1`.
 
-### Step 6 — Install the CLI (for AI integration)
+**On any entry detail page** you can also:
+
+- **Edit** — change title/body (logged as `update`)
+- **Approve** — flip status if pending (logged as `approve`)
+- **Delete** — remove the entry (kept in audit log)
+
+✅ If you only need a team knowledge base, **you're done**. Skip to [Manage / inspect](#manage--inspect) or [Stop / restart](#stop--restart--wipe).
+
+---
+
+## Part 2 — AI integration (optional)
+
+This part connects the dashboard's Postgres to Claude Code / Cursor / any MCP client via a CLI.
+
+### Step 5 — Install the CLI
+
+Pick **one** (uv recommended):
 
 ```bash
-# Option A: uv (recommended)
-uv tool install knowlyx
+# uv (recommended)
+uv tool install git+https://github.com/SatangBudsai/knowai.git
 
-# Option B: pipx
-pipx install knowlyx
-
-# Option C: no install, run on demand
-uvx knowai --version
+# or pipx
+pipx install git+https://github.com/SatangBudsai/knowai.git
 ```
 
-Set the same env vars in your shell so CLI hits the same database:
+Verify it's on your PATH:
+
+```bash
+knowai --version
+```
+
+If `command not found`, open a new terminal (uv/pipx adds to your PATH on first install).
+
+### Step 6 — Point the CLI at the same database
+
+The CLI uses the same `POSTGRES_*` env vars as the dashboard.
+
+**Mac / Linux:**
 
 ```bash
 export POSTGRES_HOST=localhost
@@ -97,16 +201,31 @@ export POSTGRES_DB=knowai
 export POSTGRES_SCHEMA=public
 ```
 
+Persist them in `~/.bashrc` or `~/.zshrc`.
+
+**Windows PowerShell:**
+
+```powershell
+$env:POSTGRES_HOST='localhost'
+$env:POSTGRES_PORT='5432'
+$env:POSTGRES_USER='knowai'
+$env:POSTGRES_PASSWORD='knowai'
+$env:POSTGRES_DB='knowai'
+$env:POSTGRES_SCHEMA='public'
+```
+
+Persist them in your `$PROFILE`.
+
 ### Step 7 — Connect to Claude Code
 
 ```bash
-claude mcp add knowai -- uvx knowai mcp --repo .
+claude mcp add knowai -- knowai mcp --repo .
 claude mcp list      # should show: knowai ✓
 ```
 
-Now when you chat with Claude, it automatically queries knowai before generating code.
+After this, **every chat with Claude in this folder** automatically queries knowai before generating code — no extra action needed daily.
 
-### Step 7b — Or connect to Cursor
+#### Or Cursor
 
 Edit `~/.cursor/mcp.json`:
 
@@ -114,8 +233,8 @@ Edit `~/.cursor/mcp.json`:
 {
   "mcpServers": {
     "knowai": {
-      "command": "uvx",
-      "args": ["knowai", "mcp", "--repo", "."]
+      "command": "knowai",
+      "args": ["mcp", "--repo", "."]
     }
   }
 }
@@ -123,202 +242,118 @@ Edit `~/.cursor/mcp.json`:
 
 Restart Cursor.
 
-### Step 8 — Test that it works
+### Step 8 — Confirm the AI uses it
 
-In your AI chat, type something like:
+In your AI chat, type:
+
 > "Add a refund endpoint to /payments"
 
-The AI should call knowai's MCP tools and reply with:
-- Existing reusable code
-- Team decisions about payments (the entry from Step 5)
-- Risk level + impact analysis
+**How to know it worked:**
 
-### Stop / restart / wipe
+- **Claude Code**: you'll see a `knowai` tool call indicator in the response.
+- **Cursor**: hover the assistant message — MCP tool calls appear inline.
+- The reply mentions your Step 4 entry about idempotency keys.
+
+If you see no MCP call: env vars from Step 6 aren't loaded in the shell that started Claude/Cursor — restart that app after exporting them.
+
+---
+
+## Verify auto-merge
+
+Add a **second** entry in the same `payment` domain with similar wording:
+
+- **Kind**: `team_decision`
+- **Domain**: `payment`
+- **Title**: `Idempotency-Key header is mandatory for payment endpoints`
+- **Body**: `All POST /payments require an Idempotency-Key header to safely retry. Keys kept 24h.`
+
+After submit you should land on the **original entry** (same id), not a new one. Check:
+
+- "Merged 1 time(s)" appears in Metadata
+- A `contributors` row lists the second entry
+- Body has the new content appended after a `---` separator
+- Audit log shows `insert` + `merge` rows
+- Overview still shows `Active = 1` (not 2)
+
+**If you see 2 separate entries:**
+
+| Cause | Fix |
+|---|---|
+| Bodies aren't similar enough (cosine < 0.92) | Use wording closer to the first entry. The threshold is intentionally strict to avoid wrong merges. |
+| Embedding model failed to load in the container | `docker compose logs web` — look for `sentence-transformers` errors. Restart `web` after first-run download finishes. |
+
+---
+
+## Manage / inspect
+
+#### From the dashboard
+
+| URL | What it shows |
+|---|---|
+| <http://localhost:8080> | Overview — counts, top domains, recent activity, stale syntheses |
+| <http://localhost:8080/knowledge> | Form to add new entries + recent team entries |
+| <http://localhost:8080/entries> | All entries with filters (domain / kind / text) |
+| <http://localhost:8080/entries/{id}> | Detail + Edit / Approve / Delete buttons |
+| <http://localhost:8080/syntheses> | Per-domain AI summaries + drift detection |
+| <http://localhost:8080/audit> | Full audit log, filter by action |
+| <http://localhost:8080/healthz> | JSON status (for monitoring) |
+
+#### From psql (no password needed via `docker exec`)
+
+```bash
+docker exec knowai-postgres psql -U knowai -d knowai -c "\dt"
+# → memory_entries, memory_entry_embeddings, memory_syntheses, memory_audit_log
+
+docker exec knowai-postgres psql -U knowai -d knowai \
+  -c "SELECT id, title, (metadata->>'merge_count')::int AS merges FROM memory_entries;"
+```
+
+---
+
+## Stop / restart / wipe
 
 ```bash
 docker compose stop          # stop, keep data
 docker compose start         # start again
-docker compose down          # stop + remove containers (data kept in volume)
+docker compose down          # remove containers (data kept in volume)
 docker compose down -v       # also wipe all data
 ```
 
-### Quick reference
+To upgrade to a new web image:
 
-| What you want | Where |
-|---|---|
-| See all knowledge | <http://localhost:8080/entries> |
-| Add new knowledge | <http://localhost:8080/knowledge> |
-| Audit log | <http://localhost:8080/audit> |
-| Domain summaries | <http://localhost:8080/syntheses> |
-| Health check | <http://localhost:8080/healthz> |
-| Full test plan | [TEST_GUIDE.md](TEST_GUIDE.md) |
+```bash
+docker compose pull web && docker compose up -d
+```
 
-### Troubleshooting
+---
+
+## Troubleshooting
 
 | Problem | Fix |
 |---|---|
 | `docker compose up` fails | Make sure Docker Desktop is running |
-| Web shows "unhealthy" | Wait 10s, Postgres is still booting. Check: `docker compose logs web` |
-| Port 5432 / 8080 in use | Change `POSTGRES_PORT` / `WEB_PORT` in `.env` |
-| Two similar entries instead of one merged | Embedding model failed to load. Check: `docker compose logs web | grep sentence` |
-| AI doesn't see knowledge | Your shell env vars don't match `.env` |
+| Web shows `unhealthy` for >30s | Postgres still booting first time. Check `docker compose logs web` |
+| Port `5432` / `8080` already in use | Change `POSTGRES_PORT` / `WEB_PORT` in `.env`, then `docker compose up -d` |
+| `knowai: command not found` | Open a new terminal (uv/pipx PATH not loaded yet) |
+| AI doesn't call knowai tools | Shell env vars don't match `.env`, OR Claude/Cursor was started before exporting them — restart it |
+| Two similar entries instead of one merged | See [Verify auto-merge](#verify-auto-merge) outcomes table above |
+| Embedding model OOM on first start | Container needs ~2GB free RAM. Close other apps and `docker compose restart web` |
+| Image pull fails (`ghcr.io` 403) | Image is public; check network/proxy. Or build locally: `git clone https://github.com/SatangBudsai/knowai.git && cd knowai && docker compose -f docker-compose.dev.yml up -d --build` |
 
 ---
 
-## ภาษาไทย
-
-### Step 1 — ติดตั้ง Docker
-
-ต้องมี Docker + Docker Compose เท่านั้น ไม่ต้องลง Python, ไม่ต้องตั้งค่า database
-
-ตรวจสอบ:
+## Build from source (contributors)
 
 ```bash
-docker --version
-docker compose version
-```
-
-### Step 2 — Clone และตั้งค่า
-
-```bash
-git clone https://github.com/SatangBudsai/knowlyx.git knowai
+git clone https://github.com/SatangBudsai/knowai.git
 cd knowai
 cp .env.example .env
+docker compose up -d --build      # uses the local Dockerfile instead of the published image
+uv sync --extra dev --extra postgres
+uv run pytest
 ```
 
-ค่า default ใน `.env` ใช้สำหรับ local ได้เลย ถ้าใช้ทีมแก้ `POSTGRES_PASSWORD` กับ `POSTGRES_HOST`
-
-### Step 3 — Start ทุกอย่าง
-
-```bash
-docker compose up -d --build
-```
-
-จะ start 2 services:
-- **Postgres** port `5432` — เก็บ knowledge
-- **Web dashboard** port `8080` — UI ของทีม
-
-รอจน healthy ทั้งสอง:
-
-```bash
-docker compose ps
-```
-
-### Step 4 — เปิด dashboard
-
-เปิด browser:
-
-```
-http://localhost:8080
-```
-
-จะเห็นหน้า **Overview** ค่าทั้งหมดเป็น 0
-
-### Step 5 — เพิ่ม knowledge ตัวแรก
-
-คลิก **Knowledge** ที่เมนูบน, แล้ว:
-
-1. Sign in ด้วยชื่อตัวเอง (เก็บใน cookie, ใช้บันทึก audit log)
-2. กรอกฟอร์ม:
-   - **Kind**: เลือก `team_decision`
-   - **Domain**: เช่น `payment`
-   - **Title**: เช่น `Use idempotency keys`
-   - **Body**: เช่น `ทุก POST /payments ต้องมี header Idempotency-Key`
-   - **Tags**: `payment, api`
-   - ติ๊ก ☑ Auto-approve
-3. กด **Save knowledge**
-
-จะไปหน้า entry detail. กลับไป Overview จะเห็นว่ามี 1 รายการแล้ว
-
-### Step 6 — ติดตั้ง CLI (สำหรับเชื่อม AI)
-
-```bash
-# ทางเลือก A: uv (แนะนำ)
-uv tool install knowlyx
-
-# ทางเลือก B: pipx
-pipx install knowlyx
-
-# ทางเลือก C: ไม่ต้องติดตั้ง รันเป็นครั้งๆ
-uvx knowai --version
-```
-
-ตั้ง env vars เดียวกันใน shell เพื่อให้ CLI เชื่อมต่อ database เดียวกัน:
-
-```bash
-export POSTGRES_HOST=localhost
-export POSTGRES_PORT=5432
-export POSTGRES_USER=knowai
-export POSTGRES_PASSWORD=knowai
-export POSTGRES_DB=knowai
-export POSTGRES_SCHEMA=public
-```
-
-### Step 7 — เชื่อมต่อ Claude Code
-
-```bash
-claude mcp add knowai -- uvx knowai mcp --repo .
-claude mcp list      # ควรเห็น: knowai ✓
-```
-
-ทีนี้เวลา chat กับ Claude มันจะ query knowai อัตโนมัติก่อนเขียนโค้ด
-
-### Step 7b — หรือเชื่อมต่อ Cursor
-
-แก้ไฟล์ `~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "knowai": {
-      "command": "uvx",
-      "args": ["knowai", "mcp", "--repo", "."]
-    }
-  }
-}
-```
-
-Restart Cursor
-
-### Step 8 — ทดสอบ
-
-ใน AI chat ลองพิมพ์:
-> "เพิ่ม refund endpoint ที่ /payments"
-
-AI ควรเรียก MCP tools ของ knowai แล้วตอบกลับมาพร้อม:
-- โค้ดเดิมที่ใช้ซ้ำได้
-- การตัดสินใจของทีมเกี่ยวกับ payment (entry จาก Step 5)
-- ระดับความเสี่ยง + impact analysis
-
-### Stop / restart / ล้างข้อมูล
-
-```bash
-docker compose stop          # หยุด เก็บข้อมูลไว้
-docker compose start         # เริ่มใหม่
-docker compose down          # หยุด + ลบ container (ข้อมูลใน volume ยังอยู่)
-docker compose down -v       # ลบข้อมูลทั้งหมด
-```
-
-### ดูข้อมูลที่ไหน
-
-| ต้องการ | URL |
-|---|---|
-| ดู knowledge ทั้งหมด | <http://localhost:8080/entries> |
-| เพิ่ม knowledge ใหม่ | <http://localhost:8080/knowledge> |
-| ดู audit log | <http://localhost:8080/audit> |
-| สรุปต่อ domain | <http://localhost:8080/syntheses> |
-| Health check | <http://localhost:8080/healthz> |
-| Test plan แบบเต็ม | [TEST_GUIDE.md](TEST_GUIDE.md) |
-
-### แก้ปัญหา
-
-| ปัญหา | วิธีแก้ |
-|---|---|
-| `docker compose up` ขึ้น error | ตรวจสอบว่า Docker Desktop รันอยู่ |
-| Web ขึ้น "unhealthy" | รอ 10 วิ Postgres ยัง boot อยู่. ดู: `docker compose logs web` |
-| Port 5432 / 8080 ชน | เปลี่ยน `POSTGRES_PORT` / `WEB_PORT` ใน `.env` |
-| มี 2 entries คล้ายกันที่ควรจะ merge เป็น 1 | embedding model โหลดไม่สำเร็จ. ดู: `docker compose logs web | grep sentence` |
-| AI ไม่เห็น knowledge | env vars ใน shell ไม่ตรงกับ `.env` |
+PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 

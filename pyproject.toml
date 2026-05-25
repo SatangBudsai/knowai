@@ -51,9 +51,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/SatangBudsai/knowlyx"
-Repository = "https://github.com/SatangBudsai/knowlyx"
-Issues = "https://github.com/SatangBudsai/knowlyx/issues"
+Homepage = "https://github.com/SatangBudsai/knowai"
+Repository = "https://github.com/SatangBudsai/knowai"
+Issues = "https://github.com/SatangBudsai/knowai/issues"
 
 [project.scripts]
 knowai = "knowlyx.cli.main:app"

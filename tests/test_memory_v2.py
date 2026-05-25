@@ -24,18 +24,20 @@ def _entry(domain="billing", title="t", body="b", approved=True) -> MemoryEntry:
 
 
 def test_v2_schema_on_first_save(tmp_path):
-    store = FileMemoryStore(tmp_path / "mem.json")
+    """First save creates a per-entry file in <store>/entries/."""
+    store = FileMemoryStore(tmp_path / "mem")
     store.save(_entry(title="first"))
 
-    raw = json.loads((tmp_path / "mem.json").read_text())
-    assert raw["version"] == 2
-    assert "entries" in raw
-    assert "syntheses" in raw
-    assert len(raw["entries"]) == 1
+    entries_dir = tmp_path / "mem" / "entries"
+    assert entries_dir.exists()
+    files = list(entries_dir.glob("*.json"))
+    assert len(files) == 1
+    raw = json.loads(files[0].read_text(encoding="utf-8"))
+    assert raw["title"] == "first"
 
 
 def test_migrates_v1_to_v2_on_load(tmp_path):
-    # write a v1 (legacy flat) file
+    """Legacy single-file v1 memory.json is split into per-entry files on load."""
     legacy_path = tmp_path / "mem.json"
     legacy = {
         "abc123": {
@@ -54,15 +56,15 @@ def test_migrates_v1_to_v2_on_load(tmp_path):
     }
     legacy_path.write_text(json.dumps(legacy), encoding="utf-8")
 
+    # passing the legacy .json path is accepted: store uses parent/stem dir
     store = FileMemoryStore(legacy_path)
-    # entry should be readable through v2 API
     entries = store.all()
     assert len(entries) == 1
     assert entries[0].title == "old"
 
-    raw = json.loads(legacy_path.read_text())
-    assert raw["version"] == 2
-    assert "abc123" in raw["entries"]
+    # legacy file renamed, per-entry file exists
+    assert (tmp_path / "mem.json.migrated").exists()
+    assert (tmp_path / "mem" / "entries" / "abc123.json").exists()
 
 
 def test_save_marks_existing_synthesis_stale(tmp_path):

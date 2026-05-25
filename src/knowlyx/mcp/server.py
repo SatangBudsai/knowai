@@ -24,7 +24,8 @@ from knowlyx.memory.store import create_store
 from knowlyx.packs.builtin import get_pack, get_packs_for_domains
 from knowlyx.reasoning.engine import ReasoningEngine
 from knowlyx.scanner.repo_scanner import RepoScanner
-from knowlyx.skills import load_workspace_skills, read_skill as _read_skill
+from knowlyx.skills import load_workspace_skills
+from knowlyx.skills import read_skill as _read_skill
 
 mcp = FastMCP(
     name="knowlyx",
@@ -119,7 +120,9 @@ def _auto_pull_workspace(repo_path: str) -> None:
     sees teammates' latest. Returns instantly — current read uses whatever
     is on disk right now. Throttled to one pull per 10s per workspace."""
     try:
-        import threading, time
+        import threading
+        import time
+
         from knowlyx import sync as _sync
         if not _sync.sync_enabled():
             return
@@ -1214,7 +1217,6 @@ def save_skill(
         tags: comma-separated tags (optional)
         repo_path: defaults to cwd
     """
-    from pathlib import Path
 
     ws_name = _workspace_name_for(repo_path)
     if not ws_name:

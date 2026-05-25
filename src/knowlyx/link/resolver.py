@@ -125,8 +125,6 @@ def resolve_workspace_or_legacy(repo_path: str | Path = ".") -> tuple[Path, Path
     p = Path(repo_path).resolve()
     while True:
         if (p / "workspace.toml").exists():
-            from knowlyx.paths import workspace_approvals_path, workspace_memory_path
-            ws_name = _read_workspace_name(p) or p.name
             # paths.workspace_*_path now returns the dir, but we want this
             # specific knowledge-home folder, not the registry-resolved one.
             return p / "memory", p / "approvals", "home"

@@ -10,7 +10,6 @@ Uses the same POSTGRES_* / KNOWAI_DB_SCHEMA env vars as the store, so a single
 
 from __future__ import annotations
 
-import os
 from importlib import resources
 from pathlib import Path
 
@@ -21,8 +20,6 @@ from fastapi.templating import Jinja2Templates
 
 from knowlyx.memory.postgres_store import PostgresMemoryStore
 from knowlyx.memory.schema import MemoryEntry, MemoryKind
-
-from knowlyx.memory.postgres_store import _validate_schema_name
 
 KINDS = [k.value for k in MemoryKind]
 

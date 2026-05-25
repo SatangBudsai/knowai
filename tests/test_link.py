@@ -58,8 +58,9 @@ def test_resolve_workspace_finds_link_in_repo(repo, isolated_home):
     assert res is not None
     assert res.workspace_name == "alpha"
     assert res.workspace_dir == isolated_home.resolve() / "workspaces" / "alpha"
-    assert res.memory_path == res.workspace_dir / "memory.json"
-    assert res.approvals_path == res.workspace_dir / "approvals.json"
+    # memory/approvals are per-entry directories now
+    assert res.memory_path == res.workspace_dir / "memory"
+    assert res.approvals_path == res.workspace_dir / "approvals"
 
 
 def test_resolve_workspace_walks_up_to_ancestor(repo, isolated_home):
@@ -76,15 +77,15 @@ def test_resolve_workspace_or_legacy_central_mode(repo, isolated_home):
     save_link(LinkConfig(workspace="alpha"), repo)
     mem, app, mode = resolve_workspace_or_legacy(repo)
     assert mode == "central"
-    assert mem == isolated_home.resolve() / "workspaces" / "alpha" / "memory.json"
-    assert app == isolated_home.resolve() / "workspaces" / "alpha" / "approvals.json"
+    assert mem == isolated_home.resolve() / "workspaces" / "alpha" / "memory"
+    assert app == isolated_home.resolve() / "workspaces" / "alpha" / "approvals"
 
 
 def test_resolve_workspace_or_legacy_legacy_mode(repo, isolated_home):
     mem, app, mode = resolve_workspace_or_legacy(repo)
     assert mode == "legacy"
-    assert mem == repo / ".knowlyx" / "memory.json"
-    assert app == repo / ".knowlyx" / "approvals.json"
+    assert mem == repo / ".knowlyx" / "memory"
+    assert app == repo / ".knowlyx" / "approvals"
 
 
 def test_memory_store_uses_central_when_linked(repo, isolated_home):
@@ -106,13 +107,13 @@ def test_memory_store_uses_central_when_linked(repo, isolated_home):
     )
     store.save(entry)
 
-    central_memory = isolated_home.resolve() / "workspaces" / "alpha" / "memory.json"
-    assert central_memory.exists()
-    data = json.loads(central_memory.read_text(encoding="utf-8"))
-    assert any(v["title"] == "test" for v in data.values())
+    central_entries = isolated_home.resolve() / "workspaces" / "alpha" / "memory" / "entries"
+    assert central_entries.exists()
+    titles = [json.loads(p.read_text(encoding="utf-8"))["title"] for p in central_entries.glob("*.json")]
+    assert "test" in titles
 
-    legacy_memory = repo / ".knowlyx" / "memory.json"
-    assert not legacy_memory.exists()
+    legacy_entries = repo / ".knowlyx" / "memory" / "entries"
+    assert not legacy_entries.exists()
 
 
 def test_memory_store_uses_legacy_when_not_linked(repo, isolated_home):
@@ -131,8 +132,9 @@ def test_memory_store_uses_legacy_when_not_linked(repo, isolated_home):
     )
     store.save(entry)
 
-    legacy_memory = repo / ".knowlyx" / "memory.json"
-    assert legacy_memory.exists()
+    legacy_entries = repo / ".knowlyx" / "memory" / "entries"
+    assert legacy_entries.exists()
+    assert any(legacy_entries.glob("*.json"))
 
 
 def test_approval_queue_uses_central_when_linked(repo, isolated_home):
@@ -150,5 +152,6 @@ def test_approval_queue_uses_central_when_linked(repo, isolated_home):
         requested_action="x",
     ))
 
-    central = isolated_home.resolve() / "workspaces" / "alpha" / "approvals.json"
+    central = isolated_home.resolve() / "workspaces" / "alpha" / "approvals"
     assert central.exists()
+    assert any(central.glob("*.json"))

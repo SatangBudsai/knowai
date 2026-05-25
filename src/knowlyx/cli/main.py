@@ -1449,7 +1449,7 @@ def doctor(
     6. Is the last cognition stamp recent enough for commit-check?
     """
     import subprocess
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone
 
     target = Path(repo_path).resolve()
     results: list[dict[str, str]] = []
@@ -1545,7 +1545,7 @@ def doctor(
         if pend:
             add("approvals", "warn",
                 f"{len(pend)} pending approval(s) — AI may be blocked",
-                f"Review: knowlyx approval list")
+                "Review: knowlyx approval list")
         else:
             add("approvals", "ok", "No pending approvals")
     except Exception:
