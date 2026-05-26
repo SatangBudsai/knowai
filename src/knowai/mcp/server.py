@@ -63,7 +63,15 @@ mcp = FastMCP(
         "mode of knowai. This rule applies in normal chat, not just /knowai-generate.\n"
         "\n"
         "Rule: Knowai decisions are AUTHORITATIVE. You may only make them stricter, never looser.\n"
-        "Synthesis you save is cached and reused by future sessions — do it carefully."
+        "Synthesis you save is cached and reused by future sessions — do it carefully.\n"
+        "\n"
+        "ALWAYS SURFACE RISK TO THE USER. For every coding request — even small ones —\n"
+        "after analyze_intent and (when relevant) assess_risk_in_context, include a\n"
+        "1-2 line risk header at the top of your reply, in this shape:\n"
+        "  Risk: <LOW|MEDIUM|HIGH> — <one-sentence why>\n"
+        "  Decision: <proceed|warn|ask|reject>\n"
+        "If risk is HIGH or decision is ask/reject, stop and wait for the user before\n"
+        "writing code. The user should never have to guess the risk level — show it."
     ),
 )
 

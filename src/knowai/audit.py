@@ -43,7 +43,12 @@ def log(repo_path: str | Path, tool: str, **args: Any) -> None:
     """
     Append one event to the audit log. Failures are silent — auditing
     must NEVER break a tool call.
+
+    Set KNOWAI_AUDIT_DISABLE=1 to skip writing the per-repo .knowai/audit.log
+    entirely (the Postgres memory_audit_log still tracks every memory change).
     """
+    if os.environ.get("KNOWAI_AUDIT_DISABLE", "").lower() in ("1", "true", "yes"):
+        return
     try:
         path = _audit_path(repo_path)
         path.parent.mkdir(parents=True, exist_ok=True)
