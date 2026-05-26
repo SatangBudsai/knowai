@@ -25,6 +25,15 @@ Risk:      refund → webhook → ledger
 
 Storage: **Postgres** with semantic auto-merge. Web dashboard for the team.
 
+Every entry has two axes so it's clear where it applies and who wrote it:
+
+| Scope ↓ / Source → | 👤 Human (added in dashboard) | 🤖 AI (saved by Claude via MCP) |
+| --- | --- | --- |
+| 🌐 **Global** — every workspace | Team-wide policies | _(rare)_ |
+| 📁 **Workspace** — one project | Project decisions | Auto-tagged from `knowai.config` |
+
+AI-written entries land as **Pending** until a human reviews them on the dashboard.
+
 ---
 
 ## Prerequisites
@@ -117,6 +126,8 @@ schema   = "public"
 
 > Or put `[database]` in `~/.knowai.config` once and per-repo files only need `workspace` + `repo_name`.
 
+When Claude saves memory via MCP, knowai auto-tags it with `scope=workspace`, this `workspace`, and this `repo_name` — entries land in the right bucket on the dashboard without any extra work.
+
 ### 6. Register knowai with Claude Code
 
 ```bash
@@ -137,6 +148,15 @@ In Claude Code, run `/knowai-generate` — Claude reads the repo and writes mean
 In Claude, try: _"Add a refund endpoint to /payments"_ — you should see a `knowai` tool call and a reply that references your stored knowledge.
 
 If not: `claude mcp list` shows `✗` → run `knowai mcp` in a terminal to see the error (usually missing DB credentials).
+
+---
+
+## Dashboard at a glance
+
+- **Home** — two hero cards: ⏳ **Pending review** (AI entries awaiting approval) + 🌐 **Global knowledge**. Plus a per-workspace breakdown.
+- **Knowledge** — workspace pills at the top, then filter by source (Human / AI), status (Approved / Pending), or domain. Every row shows scope + source badges.
+- **Entry detail** — full metadata strip plus a **Move to Global ↑** / **Move to Workspace ↓** button so you can re-scope without re-creating.
+- **Summaries / Activity** — per-domain AI syntheses and full audit log.
 
 ---
 
@@ -165,13 +185,15 @@ docker compose pull web && docker compose up -d   # upgrade
 
 ## Troubleshooting
 
-| Problem                      | Fix                                                                                                    |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `docker compose up` fails    | Docker Desktop not running                                                                             |
-| `knowai: command not found`  | Open a new terminal (uv PATH not loaded)                                                               |
-| AI doesn't call knowai tools | `knowai.config` missing or AI app started before MCP registered — restart it                           |
-| Two entries not merging      | Bodies <0.92 cosine similarity. Reword closer, or check `docker compose logs web` for embedding errors |
-| Port already in use          | Change `POSTGRES_PORT` / `WEB_PORT` in `.env`                                                          |
+| Problem                                        | Fix                                                                                                    |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `docker compose up` fails                      | Docker Desktop not running                                                                             |
+| `knowai: command not found`                    | Open a new terminal (uv PATH not loaded)                                                               |
+| AI doesn't call knowai tools                   | `knowai.config` missing or AI app started before MCP registered — restart it                           |
+| AI entries land as Global instead of Workspace | Repo has no `knowai.config`, or it's missing `workspace`. Run `knowai link <workspace> --name <repo>`  |
+| Upgraded CLI but MCP still old                 | Restart Claude Code — it caches the MCP subprocess until restart                                       |
+| Two entries not merging                        | Bodies <0.92 cosine similarity. Reword closer, or check `docker compose logs web` for embedding errors |
+| Port already in use                            | Change `POSTGRES_PORT` / `WEB_PORT` in `.env`                                                          |
 
 ---
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from knowai.link.config import LinkConfig, load_global_link, load_link
+from knowai.link.config import LinkConfig, load_link
 from knowai.paths import (
     ensure_workspace_dir,
     workspace_approvals_path,
