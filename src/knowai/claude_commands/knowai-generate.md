@@ -4,11 +4,17 @@ description: Seed knowai memory with semantically meaningful entries by reading 
 
 You are seeding the **knowai memory store** for this repository. Your job is to produce entries that future AI calls (`get_reusable_assets`, `recall_context`, `analyze_intent`) can actually use — not a structural file dump.
 
+**This command is safe to re-run at any time** — for an initial seed, after a refactor, after adding a new domain, or when a teammate says "the memory feels stale." Always check `recall_context` first so you don't duplicate work, then add / update only what changed.
+
 ## Workflow (do these in order)
 
 ### 1. Orient
 
 Call `get_project_context` to learn the repo's language, framework, architecture, and detected domains. Use the detected domains as the primary `domain` field for every entry below. Fall back to `general` only when nothing fits.
+
+### 1b. Check what's already there
+
+Before adding anything, call `list_memory` (or `recall_context` per domain) to fetch existing entries for this repo's workspace. Skip any candidate that's already covered. If you're re-running because the code changed, edit (don't duplicate) entries that need to be updated.
 
 ### 2. Pull scanner findings
 
@@ -55,7 +61,16 @@ Do NOT save:
 
 ### 7. Report
 
-After you finish, print a summary: how many entries you saved per kind, which leads you skipped and why. Keep it short — the user will refine in the dashboard.
+After you finish, print a summary in this exact shape so the user can scan it fast:
+
+```text
+Re-run summary
+  Added:    N (kind breakdown)
+  Updated:  N (kind breakdown)
+  Skipped:  N already-saved · N noise
+```
+
+End with one sentence pointing the user at the dashboard's "Pending review" card if any entries went in unapproved.
 
 ---
 
