@@ -2094,5 +2094,25 @@ def mcp_server(
 # entry point alias for the mcp subcommand
 app.command(name="mcp")(mcp_server)
 
-if __name__ == "__main__":
+
+def run() -> None:
+    """Console-script entry point.
+
+    Shortcut: `precept "<request>"` behaves like `precept analyze "<request>"`
+    when the first argument isn't a known subcommand — so you can just type a
+    request without remembering the command name.
+    """
+    argv = sys.argv[1:]
+    if argv and not argv[0].startswith("-"):
+        known: set[str] = set()
+        for cmd in app.registered_commands:
+            name = cmd.name or (cmd.callback.__name__.replace("_", "-") if cmd.callback else None)
+            if name:
+                known.add(name)
+        if argv[0] not in known:
+            sys.argv.insert(1, "analyze")
     app()
+
+
+if __name__ == "__main__":
+    run()

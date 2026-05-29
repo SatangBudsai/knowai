@@ -92,6 +92,8 @@ Then open Claude Code in any repo and try:
 /precept add a refund endpoint to /payments
 ```
 
+Prefer the terminal? `precept "add a refund endpoint to /payments"` runs the same engine and prints the verdict.
+
 Prefer to wire it up yourself? The manual steps are below.
 
 <details>

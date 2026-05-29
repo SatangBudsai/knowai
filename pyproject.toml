@@ -56,8 +56,8 @@ Repository = "https://github.com/qorstack/precept"
 Issues = "https://github.com/qorstack/precept/issues"
 
 [project.scripts]
-precept = "precept.cli.main:app"
-prc = "precept.cli.main:app"
+precept = "precept.cli.main:run"
+prc = "precept.cli.main:run"
 
 [build-system]
 requires = ["hatchling"]
