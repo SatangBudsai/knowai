@@ -135,6 +135,32 @@ A ready-made GitHub Action ships in [`.github/workflows/cognition-gate.yml`](.gi
 
 ---
 
+## Works with any AI agent (MCP)
+
+Precept is a standard stdio MCP server — the command is always `precept mcp`. Print the exact config for your client:
+
+```bash
+precept mcp-config cursor      # or: claude · vscode · windsurf · cline · all
+```
+
+| Agent                   | Setup                                                              |
+| ----------------------- | ----------------------------------------------------------------- |
+| Claude Code             | `claude mcp add precept -- precept mcp` (plus the `/precept` slash command) |
+| Cursor                  | add to `~/.cursor/mcp.json`                                        |
+| VS Code / Copilot agent | add to `.vscode/mcp.json` (uses a `servers` key)                  |
+| Windsurf                | add to `~/.codeium/windsurf/mcp_config.json`                      |
+| Cline                   | add to `cline_mcp_settings.json`                                   |
+
+Generic config most clients accept:
+
+```json
+{ "mcpServers": { "precept": { "command": "precept", "args": ["mcp"] } } }
+```
+
+> The `/precept` slash command is Claude-Code-only. On other agents, Precept's MCP tool instructions steer the agent to consult `analyze_intent` before coding — and for a hard gate that no agent can skip, use the pre-commit / CI enforcement above.
+
+---
+
 ## Manual setup
 
 ### Part 1 — Dashboard

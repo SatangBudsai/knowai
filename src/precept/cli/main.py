@@ -2095,6 +2095,55 @@ def mcp_server(
 app.command(name="mcp")(mcp_server)
 
 
+_MCP_JSON = """{
+  "mcpServers": {
+    "precept": { "command": "precept", "args": ["mcp"] }
+  }
+}"""
+
+# VS Code's native MCP support uses a "servers" key instead of "mcpServers".
+_MCP_JSON_VSCODE = """{
+  "servers": {
+    "precept": { "command": "precept", "args": ["mcp"] }
+  }
+}"""
+
+_MCP_CLIENTS = {
+    "claude": ("Claude Code", "Run:\n    claude mcp add precept -- precept mcp"),
+    "cursor": ("Cursor", "Add to ~/.cursor/mcp.json (or .cursor/mcp.json in a project):\n" + _MCP_JSON),
+    "windsurf": ("Windsurf", "Add to ~/.codeium/windsurf/mcp_config.json:\n" + _MCP_JSON),
+    "cline": ("Cline (VS Code)", "Add to Cline's cline_mcp_settings.json:\n" + _MCP_JSON),
+    "vscode": ("VS Code / Copilot agent", "Add to .vscode/mcp.json:\n" + _MCP_JSON_VSCODE),
+    "json": ("Generic MCP client", "Most clients use this shape:\n" + _MCP_JSON),
+}
+
+
+@app.command(name="mcp-config")
+def mcp_config(
+    client: str = typer.Argument("json", help="claude | cursor | vscode | windsurf | cline | json"),
+):
+    """
+    Print the MCP setup for your AI client.
+
+    precept is a standard stdio MCP server, so any MCP-capable agent (Claude
+    Code, Cursor, VS Code/Copilot, Windsurf, Cline, …) can use it — the command
+    is always `precept mcp`.
+    """
+    key = client.lower()
+    if key == "all":
+        for label, body in _MCP_CLIENTS.values():
+            console.print(f"\n[bold cyan]{label}[/bold cyan]")
+            print(body)
+        return
+    entry = _MCP_CLIENTS.get(key)
+    if not entry:
+        console.print(f"[red]Unknown client '{client}'.[/red] Options: {', '.join(_MCP_CLIENTS)} (or 'all').")
+        raise typer.Exit(1)
+    label, body = entry
+    console.print(f"[bold cyan]{label}[/bold cyan]")
+    print(body)
+
+
 def run() -> None:
     """Console-script entry point.
 

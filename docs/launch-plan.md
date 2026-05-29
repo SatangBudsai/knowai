@@ -32,8 +32,9 @@ Close that gap.
 
 Hermes sells "runs anywhere." Precept must answer.
 
-4. ⬜ **Multi-agent quickstart** — documented + tested setup for Cursor and
-   Copilot (MCP), not just Claude Code. One table: agent → install command.
+4. ✅ **Multi-agent setup** — `precept mcp-config <client>` prints the config
+   for Claude Code, Cursor, VS Code/Copilot, Windsurf, Cline; README has a
+   per-agent table. _Next: live-test each client end-to-end._
 5. ⬜ **Reliable auto-capture** — capture team decisions from commit messages /
    PR descriptions, not only when the agent remembers to call `remember_*`.
 
